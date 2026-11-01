@@ -77,7 +77,9 @@ jobs:
               assert any(u['location'] == '/' and u['backend'] == 'http://shiori:8080/' for u in upstreams)
 
               inject = app['injects'][0]
-              assert inject['on'] == 'browser'
+              # PyYAML resolves the unquoted YAML 1.1 key `on` to boolean True.
+              inject_phase = inject.get('on', inject.get(True))
+              assert inject_phase == 'browser', inject_phase
               assert inject['when'] == ['/login']
               step = inject['do'][0]
               assert step['src'] == 'builtin://simple-inject-' + pw
