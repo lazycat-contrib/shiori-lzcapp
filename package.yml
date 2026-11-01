@@ -1,0 +1,18 @@
+package: community.lazycat.app.shiori
+version: 1.8.0
+name: Shiori
+description: "Simple self-hosted bookmark manager with archive snapshots and offline reading."
+min_os_version: "1.5.0"
+homepage: https://github.com/go-shiori/shiori
+author: go-shiori
+license: MIT
+permissions:
+  required:
+    - net.internet
+locales:
+  zh:
+    name: Shiori
+    description: "简洁的自托管书签管理器，支持网页快照归档与离线阅读。"
+  en:
+    name: Shiori
+    description: "Simple self-hosted bookmark manager with archive snapshots and offline reading."

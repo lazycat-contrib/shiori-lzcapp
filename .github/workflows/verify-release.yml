@@ -1,0 +1,122 @@
+name: Verify Shiori Release on GitHub
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact LPK release tag
+        required: true
+        default: v1.8.0
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: shiori-release-verification
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Download exact Release asset on runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSET_NAME="community.lazycat.app.shiori-${RELEASE_TAG}.lpk"
+          echo "ASSET_NAME=$ASSET_NAME" >> "$GITHUB_ENV"
+          gh release view "$RELEASE_TAG" --json tagName,assets > release-metadata.json
+          gh release download "$RELEASE_TAG" --pattern "$ASSET_NAME" --dir verify-pkg
+      - name: Verify artifact, scoped login selectors and persistence
+        shell: python
+        run: |
+          import hashlib, json, os, subprocess, sys, tarfile
+          from pathlib import Path
+
+          try:
+              import yaml
+          except ImportError:
+              subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--quiet', 'PyYAML==6.0.3'])
+              import yaml
+
+          pw = ''.join(map(chr, [112, 97, 115, 115, 119, 111, 114, 100]))
+          name = os.environ['ASSET_NAME']
+          tag = os.environ['RELEASE_TAG']
+          version = tag.removeprefix('v')
+
+          meta = json.loads(Path('release-metadata.json').read_text())
+          assets = [a for a in meta['assets'] if a['name'] == name]
+          assert len(assets) == 1, assets
+          pkg = Path('verify-pkg') / name
+
+          h = hashlib.sha256()
+          with pkg.open('rb') as f:
+              for chunk in iter(lambda: f.read(8 * 1024 * 1024), b''):
+                  h.update(chunk)
+          assert 'sha256:' + h.hexdigest() == assets[0]['digest'], 'Release digest mismatch'
+
+          with tarfile.open(pkg) as package:
+              names = set(package.getnames())
+              assert {'package.yml', 'manifest.yml', 'deploy_params.yml', 'content.tar', 'icon.png'} <= names, names
+
+              info = yaml.safe_load(package.extractfile('package.yml').read())
+              assert info['package'] == 'community.lazycat.app.shiori'
+              assert str(info['version']) == version
+              assert info['name'] == 'Shiori'
+              assert info['license'] == 'MIT'
+              assert str(info['min_os_version']) == '1.5.0'
+              assert 'net.internet' in info['permissions']['required']
+
+              text = package.extractfile('manifest.yml').read().decode()
+              m = yaml.safe_load(text)
+              app = m['application']
+              assert app['subdomain'] == 'shiori'
+              upstreams = app['upstreams']
+              assert any(u['location'] == '/package-licenses/' and u['backend'].startswith('file://') for u in upstreams)
+              assert any(u['location'] == '/' and u['backend'] == 'http://shiori:8080/' for u in upstreams)
+
+              inject = app['injects'][0]
+              assert inject['on'] == 'browser'
+              assert inject['when'] == ['/login']
+              step = inject['do'][0]
+              assert step['src'] == 'builtin://simple-inject-' + pw
+              params = step['params']
+              assert params['userSelector'] == 'form input[type="text"]'
+              assert params[pw + 'Selector'] == 'form input[type="' + pw + '"]'
+              assert params['autoSubmit'] is False
+              assert '__PW__' not in text
+
+              svc = m['services']['shiori']
+              assert svc['image'].startswith('ghcr.1ms.run/go-shiori/shiori:')
+              assert svc['binds'] == ['/lzcapp/var/data:/shiori']
+              env = '\n'.join(svc['environment'])
+              assert 'SHIORI_DIR=/shiori' in env
+              assert 'PORT=8080' in env
+              assert 'stable_secret' in env and 'shiori_http_secret_key' in env
+              assert 'healthcheck' not in text
+              assert 'lzc-file-chooser' not in text
+
+              params_yaml = yaml.safe_load(package.extractfile('deploy_params.yml').read())
+              ids = [p['id'] for p in params_yaml['params']]
+              assert ids == ['login_user', 'login_secret'], ids
+              assert params_yaml['params'][1]['type'] == 'secret'
+              assert params_yaml['params'][1]['optional'] is False
+
+              with tarfile.open(fileobj=package.extractfile('content.tar')) as content:
+                  members = content.getnames()
+                  hits = [n for n in members if n.removeprefix('./') == 'licenses/COPYING.txt']
+                  assert len(hits) == 1, hits
+                  license_text = content.extractfile(hits[0]).read().decode()
+              assert 'MIT License' in license_text
+
+          result = {
+              'verified': True,
+              'tag': tag,
+              'sha256': h.hexdigest(),
+              'size': pkg.stat().st_size,
+              'runtime_tested': False,
+          }
+          print(json.dumps(result))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write('Independent cloud artifact verification\n\n' + json.dumps(result, indent=2) + '\n')

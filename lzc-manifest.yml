@@ -1,0 +1,53 @@
+application:
+  subdomain: shiori
+  multi_instance: false
+  upstreams:
+    - location: /package-licenses/
+      backend: file:///lzcapp/pkg/content/licenses/
+    - location: /
+      backend: http://shiori:8080/
+  injects:
+    - id: login-autofill
+      on: browser
+      when:
+        - /login
+      do:
+        - src: builtin://simple-inject-password
+          params:
+            user: |-
+              {{ .U.login_user | replace "\r" "" | replace "\n" "\n              " }}
+            password: |-
+              {{ .U.login_secret | replace "\r" "" | replace "\n" "\n              " }}
+            userSelector: 'form input[type="text"]'
+            passwordSelector: 'form input[type="password"]'
+            autoSubmit: false
+
+services:
+  shiori:
+    # upstream: ghcr.io/go-shiori/shiori:v1.8.0
+    image: ghcr.1ms.run/go-shiori/shiori:v1.8.0
+    environment:
+      - SHIORI_DIR=/shiori
+      - PORT=8080
+      # A stable session key keeps existing logins valid across container restarts.
+      - |-
+        SHIORI_HTTP_SECRET_KEY={{ stable_secret "shiori_http_secret_key" | replace "\r" "" | replace "\n" "" }}
+    binds:
+      - /lzcapp/var/data:/shiori
+
+usage: |
+  Shiori 是自托管书签管理器，支持网页快照归档、标签与离线阅读，数据和数据库都放在一个持久目录里。
+
+  使用方法：
+  1. 首次安装后打开应用，会看到登录页。用部署参数里给出的用户名和密码登录（首次会自动填充，需要手动点击登录）。
+  2. 如果这是全新实例且还没有账号，先用同一组凭据注册/创建账号，再登录。
+  3. 之后添加书签即可；归档快照会保存在应用数据目录里。
+
+  数据与安全：
+  - 书签、标签、归档快照和 SQLite 数据库统一保存在 /lzcapp/var/data，卸载应用会一并删除，重要数据请提前导出备份。
+  - 会话密钥由平台稳定密钥生成，容器重启后不会强制所有人重新登录。
+  - 应用经懒猫入口鉴权访问；登录框只填充登录页的用户名和密码两个字段，不填充其他表单，也不自动提交。
+
+  说明：
+  - 登录页是前端单页路由 /login，自动填充只在浏览器端生效。
+  - 未做真机验证：账号创建、登录、书签增删改、网页归档、导入导出与重启后持久化均未在设备上实测。

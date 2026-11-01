@@ -1,0 +1,21 @@
+params:
+  - id: login_user
+    type: string
+    name: Login username
+    description: "Use this username when creating or signing in to the Shiori account. The parameter only controls login autofill; it does not create an account."
+    default_value: admin
+    optional: false
+  - id: login_secret
+    type: secret
+    name: Login secret
+    description: "Password for the Shiori account, used only for login autofill. Create the account with the same credential on first use; this parameter does not create or reset it."
+    default_value: "$random(len=20)"
+    optional: false
+locales:
+  zh:
+    login_user:
+      name: 登录用户名
+      description: 首次创建或用它登录 Shiori 账号时使用；此参数只控制填充，不自动建号。
+    login_secret:
+      name: 登录密码
+      description: Shiori 账号的密码，只用于登录填充。首次请用同一密码创建账号，参数不会创建或重置账号。
